@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { TOKEN_KEY } from '../constants/storage.js';
-import { getCurrentUser, loginUser, registerUser } from '../services/authService.js';
+import { loginUser, registerUser } from '../services/authService.js';
+import { getCurrentUser } from '../services/userService.js';
 import { getApiErrorMessage } from '../utils/formatters.js';
 
 const AuthContext = createContext(null);
@@ -11,48 +12,50 @@ export function AuthProvider({ children }) {
   const [isInitializing, setIsInitializing] = useState(Boolean(token));
   const [authError, setAuthError] = useState('');
 
-  const storeToken = (jwtToken) => {
+  const storeToken = useCallback((jwtToken) => {
     localStorage.setItem(TOKEN_KEY, jwtToken);
     setToken(jwtToken);
-  };
+  }, []);
 
-  const login = async (credentials) => {
+  const refreshCurrentUser = useCallback(async () => {
+    const currentUser = await getCurrentUser();
+    setUser(currentUser);
+    return currentUser;
+  }, []);
+
+  const logout = useCallback(() => {
+    localStorage.removeItem(TOKEN_KEY);
+    setToken(null);
+    setUser(null);
+  }, []);
+
+  const login = useCallback(async (credentials) => {
     setAuthError('');
 
     try {
       const authResponse = await loginUser(credentials);
       storeToken(authResponse.token);
-      const currentUser = await getCurrentUser();
-      setUser(currentUser);
-      return currentUser;
+      return await refreshCurrentUser();
     } catch (error) {
       const message = getApiErrorMessage(error, 'Unable to sign in');
       setAuthError(message);
       throw new Error(message);
     }
-  };
+  }, [refreshCurrentUser, storeToken]);
 
-  const register = async (payload) => {
+  const register = useCallback(async (payload) => {
     setAuthError('');
 
     try {
       const authResponse = await registerUser(payload);
       storeToken(authResponse.token);
-      const currentUser = await getCurrentUser();
-      setUser(currentUser);
-      return currentUser;
+      return await refreshCurrentUser();
     } catch (error) {
       const message = getApiErrorMessage(error, 'Unable to create account');
       setAuthError(message);
       throw new Error(message);
     }
-  };
-
-  const logout = () => {
-    localStorage.removeItem(TOKEN_KEY);
-    setToken(null);
-    setUser(null);
-  };
+  }, [refreshCurrentUser, storeToken]);
 
   useEffect(() => {
     let mounted = true;
@@ -64,11 +67,7 @@ export function AuthProvider({ children }) {
       }
 
       try {
-        const currentUser = await getCurrentUser();
-
-        if (mounted) {
-          setUser(currentUser);
-        }
+        await refreshCurrentUser();
       } catch {
         if (mounted) {
           logout();
@@ -85,7 +84,7 @@ export function AuthProvider({ children }) {
     return () => {
       mounted = false;
     };
-  }, [token]);
+  }, [logout, refreshCurrentUser, token]);
 
   const value = useMemo(
     () => ({
@@ -97,8 +96,9 @@ export function AuthProvider({ children }) {
       login,
       register,
       logout,
+      refreshCurrentUser,
     }),
-    [authError, isInitializing, token, user],
+    [authError, isInitializing, login, logout, refreshCurrentUser, register, token, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
